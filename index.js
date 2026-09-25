@@ -8,7 +8,7 @@ const zlib    = require('zlib');
 const { URL } = require('url');
  
 const app  = express();
-const PORT = process.env.PORT || 7860;
+const serverless = require('serverless-http');
  
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin',  '*');
@@ -1007,6 +1007,5 @@ app.get('/health', (req, res) => {
   res.json({ ok: true, service: 'VanSubF2M Steel', version: '3.0.0' });
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`VanSubF2M Steel running on port ${PORT}`);
+module.exports.handler = serverless(app);
 });
