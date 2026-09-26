@@ -1,8 +1,9 @@
 [build]
-  functions = "."
+  publish = "public"
+  functions = "netlify/functions"
 
 [functions]
-  node_bundler = "nft"
+  node_bundler = "esbuild"
 
 [[redirects]]
   from = "/*"
