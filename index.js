@@ -1,15 +1,15 @@
 'use strict';
-const express = require('express');
-const cheerio = require('cheerio');
-const AdmZip  = require('adm-zip');
-const https   = require('https');
-const http    = require('http');
-const zlib    = require('zlib');
-const { URL } = require('url');
- 
-const app  = express();
+const express    = require('express');
+const cheerio    = require('cheerio');
+const AdmZip     = require('adm-zip');
+const https      = require('https');
+const http       = require('http');
+const zlib       = require('zlib');
+const { URL }    = require('url');
 const serverless = require('serverless-http');
- 
+
+const app = express();
+
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin',  '*');
   res.header('Access-Control-Allow-Headers', '*');
@@ -17,24 +17,16 @@ app.use((req, res, next) => {
   if (req.method === 'OPTIONS') return res.sendStatus(200);
   next();
 });
- 
-// ================================================================
-//  PROXY CONFIG  ← edit these three lines to swap proxies
-// ================================================================
+
 const PROXY_1 = 'https://corsproxy.io/?url=';
 const PROXY_2 = 'https://api.codetabs.com/v1/proxy?quest=';
 const PROXY_3 = 'https://thingproxy.freeboard.io/fetch/';
-// ================================================================
- 
+
 const BASE         = 'https://subf2m.co';
 const TMDB_KEY     = process.env.TMDB_KEY || '30166e2db6b420d3f230808cd1bb2c90';
 const TMDB_BASE    = 'https://api.themoviedb.org/3';
 const MAX_PER_LANG = 2;
 
-
-// ================================================================
-//  HARDENED SUBF2M ENGINE
-// ================================================================
 const CACHE_TTL       = 6 * 60 * 60 * 1000;
 const NEG_CACHE_TTL   = 15 * 60 * 1000;
 const REQ_TIMEOUT     = 18_000;
@@ -117,36 +109,24 @@ function isAISub(text) {
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
-// ================================================================
-//  CACHE
-// ================================================================
 const _cache = new Map();
 function cacheGet(key) {
   const item = _cache.get(key);
   if (!item) return null;
   const ttl = item.negative ? NEG_CACHE_TTL : CACHE_TTL;
-  if (Date.now() - item.ts > ttl) {
-    _cache.delete(key);
-    return null;
-  }
+  if (Date.now() - item.ts > ttl) { _cache.delete(key); return null; }
   return item.val;
 }
 function cacheSet(key, val, negative = false) {
   if (_cache.size >= CACHE_LIMIT) {
     const remove = Math.max(100, Math.floor(CACHE_LIMIT * 0.12));
     let n = 0;
-    for (const k of _cache.keys()) {
-      _cache.delete(k);
-      if (++n >= remove) break;
-    }
+    for (const k of _cache.keys()) { _cache.delete(k); if (++n >= remove) break; }
   }
   _cache.set(key, { val, ts: Date.now(), negative: !!negative });
 }
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-// ================================================================
-//  HTTP CORE
-// ================================================================
 function _request(urlStr, opts = {}, redirects = 0) {
   return new Promise((resolve, reject) => {
     if (!urlStr || redirects > MAX_REDIRECTS) return reject(new Error('Invalid redirect chain'));
@@ -191,16 +171,10 @@ function _request(urlStr, opts = {}, redirects = 0) {
       } catch (e) { res.resume(); return reject(e); }
       stream.on('data', c => {
         total += c.length;
-        if (total > maxBytes) {
-          stream.destroy(new Error('Response too large'));
-          return;
-        }
+        if (total > maxBytes) { stream.destroy(new Error('Response too large')); return; }
         chunks.push(c);
       });
-      stream.on('end', () => {
-        const buf = Buffer.concat(chunks);
-        resolve(opts.binary ? buf : buf.toString('utf8'));
-      });
+      stream.on('end', () => { const buf = Buffer.concat(chunks); resolve(opts.binary ? buf : buf.toString('utf8')); });
       stream.on('error', reject);
     });
     req.setTimeout(timeout, () => { req.destroy(new Error('Timeout')); });
@@ -211,10 +185,7 @@ function _request(urlStr, opts = {}, redirects = 0) {
 
 async function getHTML(url, tries = 3, lang = 'english') {
   for (let i = 0; i < tries; i++) {
-    try {
-      const r = await _request(url, { timeout: REQ_TIMEOUT, lang });
-      if (r !== null) return r;
-    } catch (_) {}
+    try { const r = await _request(url, { timeout: REQ_TIMEOUT, lang }); if (r !== null) return r; } catch (_) {}
     if (i < tries - 1) await sleep(700 * (i + 1));
   }
   return null;
@@ -222,56 +193,29 @@ async function getHTML(url, tries = 3, lang = 'english') {
 
 async function getBinary(url, tries = 3) {
   for (let i = 0; i < tries; i++) {
-    try {
-      const r = await _request(url, { binary: true, timeout: DL_TIMEOUT, maxBytes: MAX_SRT_BYTES });
-      if (r !== null) return r;
-    } catch (_) {}
+    try { const r = await _request(url, { binary: true, timeout: DL_TIMEOUT, maxBytes: MAX_SRT_BYTES }); if (r !== null) return r; } catch (_) {}
   }
   const enc = encodeURIComponent(url);
-  const proxied = [
-    `${PROXY_1}${enc}`,
-    `${PROXY_2}${enc}`,
-    `${PROXY_3}${url}`,
-  ];
+  const proxied = [`${PROXY_1}${enc}`, `${PROXY_2}${enc}`, `${PROXY_3}${url}`];
   for (const pUrl of proxied) {
-    try {
-      const r = await _request(pUrl, { binary: true, timeout: DL_TIMEOUT, maxBytes: MAX_SRT_BYTES });
-      if (r && r.length > 50) return r;
-    } catch (_) {}
+    try { const r = await _request(pUrl, { binary: true, timeout: DL_TIMEOUT, maxBytes: MAX_SRT_BYTES }); if (r && r.length > 50) return r; } catch (_) {}
   }
   return null;
 }
 
-// ================================================================
-//  STRING / TITLE NORMALIZATION
-// ================================================================
 function _clean(t) { return String(t || '').replace(/\s+/g, ' ').trim(); }
 function normalizeTitle(t) {
-  return _clean(t)
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .replace(/[&+]/g, ' and ')
-    .replace(/['’`]/g, '')
-    .replace(/[^a-z0-9]+/g, ' ')
-    .replace(/\b(the|a|an)\b/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return _clean(t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+    .replace(/[&+]/g, ' and ').replace(/[''`]/g, '').replace(/[^a-z0-9]+/g, ' ')
+    .replace(/\b(the|a|an)\b/g, ' ').replace(/\s+/g, ' ').trim();
 }
 function titleToSlug(title, year) {
-  const base = (title || '').toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .replace(/&/g, 'and')
-    .replace(/[^a-z0-9\s]/g, '')
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '');
+  const base = (title || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/&/g, 'and').replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
   return year ? `${base}-${year}` : base;
 }
 function normNumber(n) { return n == null || n === '' ? null : Number(n); }
 
-// ================================================================
-//  RELEASE FINGERPRINT
-// ================================================================
 const SOURCE_ALIASES = [
   ['web-dl', 'webdl'], ['web_dl', 'webdl'], ['web dl', 'webdl'], ['web-rip', 'webrip'],
   ['bluray', 'bluray'], ['blu-ray', 'bluray'], ['bdrip', 'bdrip'], ['bdremux', 'bdremux'],
@@ -282,12 +226,7 @@ const SOURCE_ALIASES = [
 ];
 
 function normalizeReleaseText(text) {
-  return _clean(text)
-    .replace(/[\[\](){},]/g, ' ')
-    .replace(/[._]+/g, ' ')
-    .replace(/-/g, ' - ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return _clean(text).replace(/[\[\](){},]/g, ' ').replace(/[._]+/g, ' ').replace(/-/g, ' - ').replace(/\s+/g, ' ').trim();
 }
 
 function parseRelease(text) {
@@ -295,68 +234,39 @@ function parseRelease(text) {
   const s = normalizeReleaseText(raw);
   const lo = s.toLowerCase();
   const tokens = {
-    raw,
-    season: null, episode: null, episodeEnd: null,
+    raw, season: null, episode: null, episodeEnd: null,
     resolution: null, source: null, service: null, group: null,
     codec: null, audio: null, edition: null, hdr: null,
     proper: false, repack: false, corrected: false, synced: false,
   };
-
   let m = raw.match(/\b[Ss](\d{1,3})[ ._-]?[Ee](\d{1,4})(?:[ ._-]?[Ee](\d{1,4}))?\b/);
-  if (m) {
-    tokens.season = +m[1];
-    tokens.episode = +m[2];
-    tokens.episodeEnd = m[3] ? +m[3] : null;
-  } else {
+  if (m) { tokens.season = +m[1]; tokens.episode = +m[2]; tokens.episodeEnd = m[3] ? +m[3] : null; }
+  else {
     m = raw.match(/\b(\d{1,3})\s*[xX]\s*(\d{1,4})(?:\s*[-–]\s*(\d{1,4}))?\b/);
-    if (m) {
-      tokens.season = +m[1];
-      tokens.episode = +m[2];
-      tokens.episodeEnd = m[3] ? +m[3] : null;
-    }
+    if (m) { tokens.season = +m[1]; tokens.episode = +m[2]; tokens.episodeEnd = m[3] ? +m[3] : null; }
   }
-
   m = raw.match(/\b(?:season\s*)?(\d{1,2})\s*[ ._-]*x\s*(\d{1,3})\b/i);
   if (!tokens.season && m) { tokens.season = +m[1]; tokens.episode = +m[2]; }
-
   const res = raw.match(/\b(2160p|4k|1080p|1080i|720p|576p|576i|480p|480i)\b/i);
   if (res) tokens.resolution = res[1].toLowerCase() === '4k' ? '2160p' : res[1].toLowerCase();
-
-  for (const [needle, value] of SOURCE_ALIASES) {
-    if (lo.includes(needle)) { tokens.source = value; break; }
-  }
+  for (const [needle, value] of SOURCE_ALIASES) { if (lo.includes(needle)) { tokens.source = value; break; } }
   if (lo.includes('hdr10+')) tokens.hdr = 'hdr10+';
   else if (lo.includes('dolby vision') || /\bdv\b/i.test(raw)) tokens.hdr = 'dv';
   else if (/\bhdr\b/i.test(raw)) tokens.hdr = 'hdr';
-
-  const codecs = [
-    ['x265', 'x265'], ['h265', 'x265'], ['hevc', 'x265'], ['x264', 'x264'], ['h264', 'x264'],
-    ['av1', 'av1'], ['vp9', 'vp9'], ['vc-1', 'vc1'], ['mpeg-4', 'mpeg4'], ['mpeg4', 'mpeg4'],
-  ];
+  const codecs = [['x265','x265'],['h265','x265'],['hevc','x265'],['x264','x264'],['h264','x264'],['av1','av1'],['vp9','vp9'],['vc-1','vc1'],['mpeg-4','mpeg4'],['mpeg4','mpeg4']];
   for (const [needle, value] of codecs) if (lo.includes(needle)) { tokens.codec = value; break; }
-
-  const audios = [
-    ['atmos', 'atmos'], ['truehd', 'truehd'], ['dts-hd ma', 'dtshdma'], ['dts-hd', 'dtshd'],
-    ['dts:x', 'dtsx'], ['dts', 'dts'], ['ddp', 'ddp'], ['dd+', 'ddp'], ['eac3', 'ddp'],
-    ['ac3', 'ac3'], ['aac', 'aac'], ['flac', 'flac'],
-  ];
+  const audios = [['atmos','atmos'],['truehd','truehd'],['dts-hd ma','dtshdma'],['dts-hd','dtshd'],['dts:x','dtsx'],['dts','dts'],['ddp','ddp'],['dd+','ddp'],['eac3','ddp'],['ac3','ac3'],['aac','aac'],['flac','flac']];
   for (const [needle, value] of audios) if (lo.includes(needle)) { tokens.audio = value; break; }
-
-  const editions = ['extended', 'unrated', 'director', 'directors cut', 'theatrical', 'imax', 'open matte', 'remastered', 'special edition', 'criterion'];
+  const editions = ['extended','unrated','director','directors cut','theatrical','imax','open matte','remastered','special edition','criterion'];
   for (const ed of editions) if (lo.includes(ed)) { tokens.edition = ed; break; }
-
   tokens.proper = /\b(?:proper|real[ ._-]?proper)\b/i.test(raw);
   tokens.repack = /\brepack\b/i.test(raw);
   tokens.corrected = /\b(?:fixed|corrected|v2|v3)\b/i.test(raw);
   tokens.synced = /\b(?:synced|sync)\b/i.test(raw);
-
-  // Release groups are normally after a final hyphen, but never assume that blindly.
   const gm = raw.match(/(?:^|[ ._-])(?:-[ ]?)([A-Za-z][A-Za-z0-9]{1,30})\s*$/);
   if (gm) {
     const candidate = gm[1].toUpperCase();
-    if (!/^(WEB|DL|RIP|REMUX|BLURAY|HDTV|X264|X265|HEVC|1080P|720P|2160P|AAC|DDP|DTS)$/.test(candidate)) {
-      tokens.group = candidate;
-    }
+    if (!/^(WEB|DL|RIP|REMUX|BLURAY|HDTV|X264|X265|HEVC|1080P|720P|2160P|AAC|DDP|DTS)$/.test(candidate)) tokens.group = candidate;
   }
   if (!tokens.group) {
     const gm2 = raw.match(/\b(?:WEB-DL|WEBRip|BluRay|HDTV|AMZN|NF|DSNP|ATVP)[ ._-]+(?:[A-Za-z0-9]+[ ._-]+){0,4}([A-Z][A-Za-z0-9]{1,20})$/);
@@ -381,42 +291,29 @@ function scoreReleaseMatch(sub, streamTokens, type) {
   const subText = sub.releaseInfo || sub._rawText || '';
   const st = parseRelease(subText);
   let score = 0;
-  let reasons = [];
   if (streamTokens) {
     if (type === 'series') {
       if (streamTokens.season != null && streamTokens.episode != null) {
-        if (st.season === streamTokens.season && st.episode === streamTokens.episode) { score += 140; reasons.push('exact episode'); }
-        else if (st.season === streamTokens.season && st.episode == null) { score += 35; reasons.push('season'); }
+        if (st.season === streamTokens.season && st.episode === streamTokens.episode) score += 140;
+        else if (st.season === streamTokens.season && st.episode == null) score += 35;
         else if (st.season != null || st.episode != null) score -= 70;
       }
     }
-    if (streamTokens.source && st.source) {
-      if (streamTokens.source === st.source) { score += 28; reasons.push('source'); }
-      else score -= 8;
-    }
-    if (streamTokens.resolution && st.resolution) {
-      if (streamTokens.resolution === st.resolution) { score += 14; reasons.push('resolution'); }
-      else score -= 4;
-    }
-    if (streamTokens.group && st.group) {
-      if (streamTokens.group.toUpperCase() === st.group.toUpperCase()) { score += 38; reasons.push('group'); }
-      else score -= 6;
-    }
+    if (streamTokens.source && st.source) { score += streamTokens.source === st.source ? 28 : -8; }
+    if (streamTokens.resolution && st.resolution) { score += streamTokens.resolution === st.resolution ? 14 : -4; }
+    if (streamTokens.group && st.group) { score += streamTokens.group.toUpperCase() === st.group.toUpperCase() ? 38 : -6; }
     for (const k of ['codec','audio','edition','hdr']) {
       if (streamTokens[k] && st[k]) score += streamTokens[k] === st[k] ? 8 : -2;
     }
   }
-  if (sub.isGood) { score += 10; reasons.push('good'); }
+  if (sub.isGood) score += 10;
   if (sub.goodVotes >= 3 && sub.goodVotes > sub.badVotes) score += Math.min(10, sub.goodVotes);
   if (sub.downloads > 0) score += Math.min(8, Math.log10(sub.downloads + 1) * 3);
   score += qualityBonus(subText);
   if (st.proper || st.repack || st.corrected || st.synced) score += 4;
-  return { score, tokens: st, reasons };
+  return { score, tokens: st };
 }
 
-// ================================================================
-//  TMDB
-// ================================================================
 async function getTMDB(imdbId) {
   const ck = `tmdb:${imdbId}`;
   const hit = cacheGet(ck);
@@ -428,10 +325,10 @@ async function getTMDB(imdbId) {
     let info = null;
     if (d.movie_results?.length) {
       const m = d.movie_results[0];
-      info = { title: m.title || m.original_title, originalTitle: m.original_title || m.title, year: m.release_date?.slice(0,4) || null, type: 'movie', tmdbId: m.id, runtime: m.runtime || null };
+      info = { title: m.title || m.original_title, originalTitle: m.original_title || m.title, year: m.release_date?.slice(0,4) || null, type: 'movie', tmdbId: m.id };
     } else if (d.tv_results?.length) {
       const t = d.tv_results[0];
-      info = { title: t.name || t.original_name, originalTitle: t.original_name || t.name, year: t.first_air_date?.slice(0,4) || null, type: 'series', tmdbId: t.id, runtime: null };
+      info = { title: t.name || t.original_name, originalTitle: t.original_name || t.name, year: t.first_air_date?.slice(0,4) || null, type: 'series', tmdbId: t.id };
     }
     cacheSet(ck, info, !info);
     return info;
@@ -447,19 +344,12 @@ async function getTMDBSeasonMeta(tmdbId, season) {
     const raw = await _request(`${TMDB_BASE}/tv/${tmdbId}/season/${season}?api_key=${encodeURIComponent(TMDB_KEY)}`, { timeout: TMDB_TIMEOUT });
     if (!raw) { cacheSet(ck, null, true); return null; }
     const d = JSON.parse(raw);
-    const meta = {
-      year: d.air_date?.slice(0,4) || null,
-      name: d.name || null,
-      episodeCount: Array.isArray(d.episodes) ? d.episodes.length : null,
-    };
+    const meta = { year: d.air_date?.slice(0,4) || null, name: d.name || null, episodeCount: Array.isArray(d.episodes) ? d.episodes.length : null };
     cacheSet(ck, meta, !meta.year && !meta.name);
     return meta;
   } catch (_) { cacheSet(ck, null, true); return null; }
 }
 
-// ================================================================
-//  SEARCH / SLUG RESOLUTION
-// ================================================================
 function slugFromHref(href) {
   if (!href || !href.startsWith('/subtitles/')) return null;
   const parts = href.split('/').filter(Boolean);
@@ -546,9 +436,7 @@ async function _smartPatternSlugs(title, season, seasonYear, showYear) {
   const patterns = [];
   const years = [...new Set([seasonYear, showYear, seasonYear ? String(+seasonYear-1) : null, seasonYear ? String(+seasonYear+1) : null].filter(Boolean))];
   for (const yr of years) {
-    if (ord) {
-      patterns.push(`${base}-${ord}-season-${yr}`, `${base}--${ord}-season-${yr}`, `${base}-the-${ord}-season-${yr}`, `${base}-${ord}-season-tv-${yr}`);
-    }
+    if (ord) { patterns.push(`${base}-${ord}-season-${yr}`, `${base}--${ord}-season-${yr}`, `${base}-the-${ord}-season-${yr}`, `${base}-${ord}-season-tv-${yr}`); }
     patterns.push(`${base}-season-${season}-${yr}`, `${base}-s${pad}-${yr}`, `${base}-${yr}`);
   }
   if (ord) patterns.push(`${base}-${ord}-season`, `${base}--${ord}-season`, `${base}-the-${ord}-season`, `${base}-${ord}-series`);
@@ -569,7 +457,6 @@ async function resolveSeriesSlug(imdbId, season) {
   const showYear = tmdb?.year;
   const seasonMeta = tmdb?.tmdbId ? await getTMDBSeasonMeta(tmdb.tmdbId, season) : null;
   const seasonYear = seasonMeta?.year || null;
-
   let slug = await _searchSeriesSlugByQuery(imdbId, season, title, seasonYear, showYear);
   if (slug) { cacheSet(ck, slug); return slug; }
   if (title) {
@@ -630,7 +517,6 @@ async function resolveMovieSlug(imdbId, titleHint, yearHint) {
   const tmdb = await getTMDB(imdbId);
   const title = tmdb?.title || titleHint;
   const year = tmdb?.year || yearHint;
-
   if (title && year) {
     const direct = titleToSlug(title, year);
     if (await _probeMovieSlug(direct, title)) { cacheSet(ck, direct); return direct; }
@@ -656,9 +542,6 @@ async function resolveMovieSlug(imdbId, titleHint, yearHint) {
   return null;
 }
 
-// ================================================================
-//  SUBTITLE SCRAPING
-// ================================================================
 function extractSubtitleId(href) {
   if (!href) return null;
   const m = String(href).match(/\/(\d+)\/?$/);
@@ -725,10 +608,7 @@ async function _enrichSub(sub) {
   const authorNote = _clean($('p.comment, .comment, .notes, .author-comment').first().text());
   const relLines = $('ul.release li, .release-names li, ul.scrolllist li, .release li').map((_, e) => _clean($(e).text())).get().filter(Boolean);
   const releaseInfo = (relLines.length ? relLines.join(' | ') : sub.releaseInfo).substring(0, 300);
-  if (isAISub(`${authorNote} ${releaseInfo} ${sub.comment}`)) {
-    cacheSet(ck, { __aiBlocked: true }, true);
-    return null;
-  }
+  if (isAISub(`${authorNote} ${releaseInfo} ${sub.comment}`)) { cacheSet(ck, { __aiBlocked: true }, true); return null; }
   const enriched = { ...sub, releaseInfo, goodVotes, badVotes, downloads, isGood: sub.isGood || (ratio !== null && ratio >= 0.70 && goodVotes >= 2), authorNote };
   cacheSet(ck, enriched);
   return enriched;
@@ -736,7 +616,6 @@ async function _enrichSub(sub) {
 
 async function getSubsList(slug, lang, season, episode) {
   if (!ALLOWED_LANGS.has(lang)) return [];
-  // IMPORTANT: season is part of the cache key. The old implementation could collide S01E03 with S02E03.
   const ck = `list3:${slug}:${lang}:${season ?? 0}:${episode ?? 0}`;
   const hit = cacheGet(ck);
   if (hit !== null) return hit;
@@ -757,13 +636,9 @@ async function getSubsList(slug, lang, season, episode) {
       raw.push({ subId, detailUrl, isGood:false, releaseInfo:'', comment:'', authorNote:'', lang, goodVotes:0, badVotes:0, downloads:0, _rawText:_clean($(a).text()) });
     });
   }
-
   const unique = [];
   const seen = new Set();
   for (const s of raw) if (!seen.has(s.subId)) { seen.add(s.subId); unique.push(s); }
-
-  // Filter exact episode when the site gives us a recognizable episode token. If nothing matches,
-  // retain the full candidate pool instead of returning an empty result.
   let candidates = unique;
   if (season != null && episode != null) {
     const exact = unique.filter(s => {
@@ -772,9 +647,6 @@ async function getSubsList(slug, lang, season, episode) {
     });
     if (exact.length) candidates = exact;
   }
-
-  // Do not throw away candidates before AI filtering. Enrich in batches and keep going until
-  // enough human candidates are found or the hard limit is reached.
   const enriched = [];
   for (let i = 0; i < candidates.length && enriched.length < MAX_DETAIL; i += DETAIL_CONCURRENCY) {
     const batch = candidates.slice(i, i + DETAIL_CONCURRENCY);
@@ -786,16 +658,11 @@ async function getSubsList(slug, lang, season, episode) {
   return enriched;
 }
 
-// ================================================================
-//  SUBTITLE FILE VALIDATION / DECODING
-// ================================================================
 function _ext(n) { return n.match(/(\.[^.]+)$/)?.[1]?.toLowerCase() ?? ''; }
 function _looksLikeSub(t) {
   return typeof t === 'string' && t.length > 40 && /(?:^|\n)\s*(?:\d+\s*\n)?\s*\d{1,2}:\d{2}:\d{2}[,.]\d{3}\s*-->\s*\d{1,2}:\d{2}:\d{2}[,.]\d{3}/m.test(t);
 }
-function _looksArabic(t) {
-  return /[\u0600-\u06FF]/.test(t);
-}
+function _looksArabic(t) { return /[\u0600-\u06FF]/.test(t); }
 function decodeSubtitle(buf) {
   if (!Buffer.isBuffer(buf)) return null;
   let offset = 0;
@@ -806,10 +673,7 @@ function decodeSubtitle(buf) {
   if (typeof TextDecoder === 'function') {
     const encodings = ['utf-8', 'utf-16le', 'windows-1256', 'windows-1252', 'iso-8859-1'];
     for (const enc of encodings) {
-      try {
-        const t = new TextDecoder(enc, { fatal: false }).decode(u8);
-        if (_looksLikeSub(t) && !t.includes('\uFFFD')) return t;
-      } catch (_) {}
+      try { const t = new TextDecoder(enc, { fatal: false }).decode(u8); if (_looksLikeSub(t) && !t.includes('\uFFFD')) return t; } catch (_) {}
     }
   }
   const latin = u8.toString('latin1');
@@ -823,7 +687,6 @@ function validateSubtitleText(text) {
   if (bad > 5) return { ok:false, reason:'encoding' };
   return { ok:true, cues, arabic:_looksArabic(text) };
 }
-
 function _extractFromZip(buf) {
   try {
     const zip = new AdmZip(buf);
@@ -861,14 +724,10 @@ async function fetchSRT(downloadUrl) {
   } catch (_) { return null; }
 }
 
-// ================================================================
-//  SORTING / SCORING
-// ================================================================
 function sortForBest(subs, streamTokens, type) {
   return subs.map(s => {
     const match = scoreReleaseMatch(s, streamTokens, type);
-    const languageBonus = s.lang === 'arabic' || s.lang === 'english' ? 2 : 0;
-    return { ...s, _score: match.score + languageBonus, _match: match };
+    return { ...s, _score: match.score + 2, _match: match };
   }).sort((a,b) => {
     if (b._score !== a._score) return b._score - a._score;
     if (b.isGood !== a.isGood) return b.isGood ? 1 : -1;
@@ -886,9 +745,6 @@ function buildSubtitleName(s, flag) {
   return _clean(bits.join(' ')).substring(0, 140);
 }
 
-// ================================================================
-//  MANIFEST
-// ================================================================
 app.get('/manifest.json', (req, res) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.json({
@@ -903,9 +759,6 @@ app.get('/manifest.json', (req, res) => {
   });
 });
 
-// ================================================================
-//  SUBTITLE FILE ROUTE
-// ================================================================
 app.get('/sub/:enc.srt', async (req, res) => {
   let dlUrl = '';
   try { dlUrl = Buffer.from(req.params.enc, 'base64url').toString('utf8'); }
@@ -919,77 +772,49 @@ app.get('/sub/:enc.srt', async (req, res) => {
   res.end(content);
 });
 
-// ================================================================
-//  MAIN STREMIO ROUTE
-// ================================================================
 app.get('/subtitles/:type/:id/:extra?.json', async (req, res) => {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   const type = String(req.params.type || '').toLowerCase();
   const id = String(req.params.id || '');
   if (!['movie','series'].includes(type) || !/^tt\d+(?::\d+(?::\d+)?)?$/.test(id)) return res.json({ subtitles: [] });
-
   let imdbId = id, season = null, episode = null;
-  if (id.includes(':')) {
-    const p = id.split(':');
-    imdbId = p[0];
-    season = normNumber(p[1]);
-    episode = normNumber(p[2]);
-  }
+  if (id.includes(':')) { const p = id.split(':'); imdbId = p[0]; season = normNumber(p[1]); episode = normNumber(p[2]); }
   if (!/^tt\d+$/.test(imdbId)) return res.json({ subtitles: [] });
-
   const filename = String(req.query.filename || req.query.videoFilename || req.query.file || '');
   const streamTokens = parseRelease(filename);
-  // Filename is authoritative for episode when it contains one, but never overwrite a valid
-  // Stremio route episode with a missing filename token.
   if (type === 'series' && streamTokens.season != null && streamTokens.episode != null) {
     season = season ?? streamTokens.season;
     episode = episode ?? streamTokens.episode;
   }
-
   const resultKey = `result3:${type}:${imdbId}:${season ?? 0}:${episode ?? 0}:${releaseKey(streamTokens)}`;
   const cached = cacheGet(resultKey);
   if (cached !== null) return res.json({ subtitles: cached });
-
   try {
     let slug = null;
-    let tmdb = null;
     if (type === 'series' && season != null) {
       slug = await resolveSeriesSlug(imdbId, season);
     } else {
-      tmdb = await getTMDB(imdbId);
+      const tmdb = await getTMDB(imdbId);
       slug = await resolveMovieSlug(imdbId, tmdb?.title || null, tmdb?.year || null);
     }
-    if (!slug) {
-      cacheSet(resultKey, [], true);
-      return res.json({ subtitles: [] });
-    }
-
+    if (!slug) { cacheSet(resultKey, [], true); return res.json({ subtitles: [] }); }
     const [engRes, araRes] = await Promise.allSettled([
       getSubsList(slug, 'english', season, episode),
       getSubsList(slug, 'arabic', season, episode),
     ]);
     let engSubs = engRes.status === 'fulfilled' ? engRes.value : [];
     let araSubs = araRes.status === 'fulfilled' ? araRes.value : [];
-
     engSubs = sortForBest(engSubs, streamTokens, type).slice(0, MAX_PER_LANG);
     araSubs = sortForBest(araSubs, streamTokens, type).slice(0, MAX_PER_LANG);
-
     const proto = req.headers['x-forwarded-proto'] || (req.socket?.encrypted ? 'https' : 'http');
     const host = req.headers['x-forwarded-host'] || req.headers.host;
     if (!host) return res.json({ subtitles: [] });
     const origin = `${proto}://${host}`;
-
     const build = (subs, langCode, flag) => subs.map(s => {
       const dlUrl = `${s.detailUrl}/download`;
       const enc = Buffer.from(dlUrl).toString('base64url');
-      return {
-        id: `vsub-${langCode}-${s.subId}`,
-        url: `${origin}/sub/${enc}.srt`,
-        lang: langCode,
-        name: buildSubtitleName(s, flag),
-      };
+      return { id: `vsub-${langCode}-${s.subId}`, url: `${origin}/sub/${enc}.srt`, lang: langCode, name: buildSubtitleName(s, flag) };
     });
-
     const subtitles = [...build(engSubs, 'eng', 'English'), ...build(araSubs, 'ara', 'Arabic')];
     cacheSet(resultKey, subtitles, subtitles.length === 0);
     return res.json({ subtitles });
@@ -1000,12 +825,8 @@ app.get('/subtitles/:type/:id/:extra?.json', async (req, res) => {
   }
 });
 
-// ================================================================
-//  HEALTH / DEBUG-SAFE STATUS
-// ================================================================
 app.get('/health', (req, res) => {
   res.json({ ok: true, service: 'VanSubF2M Steel', version: '3.0.0' });
 });
 
 module.exports.handler = serverless(app);
-});
